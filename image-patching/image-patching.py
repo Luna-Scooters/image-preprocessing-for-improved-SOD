@@ -8,8 +8,9 @@ from collections import defaultdict
 from collections import Counter
 import torch
 import csv 
-
-
+import yaml
+import argparse
+import tqdm
 
 def draw_gt_boxes(image, gt_boxes, color=(0, 255, 0), thickness=2):
     
@@ -23,18 +24,16 @@ def draw_gt_boxes(image, gt_boxes, color=(0, 255, 0), thickness=2):
         cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
 
 
-def create_patches(image_path, num_patches, mode, overlap):
+def create_patches(image_path, num_patches, mode, overlap, resolution, output_dir):
     # Load the image
-    image = Image.open(image_path)
-    # image = org_image.resize((640, 640))
+    org_image = Image.open(image_path)
+    image = org_image.resize((resolution[0], resolution[1]))
     width, height = image.size
     print(width, height)
 
     # Validation for grid mode
     if mode == 'grid' and (num_patches < 4 or int(math.sqrt(num_patches)) != math.sqrt(num_patches)):
         raise ValueError("For grid mode, the number of patches must be a perfect square and at least 4.")
-
-
 
     # Initialize variables
     overlap_size = 0
@@ -105,43 +104,28 @@ def detect_objects(patch, idx):
         all_boxes.append(box_info)
     return all_boxes
 
-def apply_model(num_patches, mode, output_dir):
-    # Calculate grid size
-    grid_size = int(math.sqrt(num_patches)) if mode == 'grid' else num_patches
-
-    # Load the first patch to get individual dimensions
-    first_patch_path = f"{output_dir}/patch_vertical_1.png" if mode == 'vertical' else f"{output_dir}/patch_horizontal_1.png" if mode == 'horizontal' else f"{output_dir}/patch_grid_1.png"
-    # print(f"(((((((((((((({first_patch_path}))))))))))))))")
-    first_patch = cv2.imread(first_patch_path)
-    patch_height, patch_width, _ = first_patch.shape
-
-    # Determine dimensions of the full image
-    full_width = patch_width * grid_size if mode in ['vertical', 'grid'] else patch_width
-    full_height = patch_height * grid_size if mode in ['horizontal', 'grid'] else patch_height
-
-    # Create a new image to paste the patches into
-    # full_image = np.zeros((full_height, full_width, 3), dtype=np.uint8)
+def apply_model(num_patches, mode, patch_width, patch_height, output_dir):
 
     results = []
     train_idx = 0
     # Loop through saved patches and paste them in the correct positions
-    for i in range(grid_size):
+    for i in range(num_patches):
         
-        patch_path = f"{output_dir}/patch_vertical_{i+1}.png"
+        patch_path = f"{output_dir}/patch_vertical_{i+1}.png" if mode == 'vertical' else f"{output_dir}/patch_horizontal_{i+1}.png" if mode == 'horizontal' else f"{output_dir}/patch_grid_{i+1}.png"
         patch = cv2.imread(patch_path)
         # print(f"patch is being processed: {patch.shape}")
         train_idx += 1
         boxes = detect_objects(patch, train_idx)
         # print(f"boxes are: {boxes}")
         if len(boxes) != 0:
-            # draw_gt_boxes(patch, boxes)
+            draw_gt_boxes(patch, boxes)
             for b in boxes:
                 results.append(b)
         else:
             continue
         
         
-        cv2.imwrite(f"{output_dir}/repatched_image_{i+1}.png", patch)
+        cv2.imwrite(f"{output_dir}/patch_with_boxes_{i+1}.png", patch)
 
     return results, patch_width, patch_height
 
@@ -243,10 +227,10 @@ def merge_bboxes(pixel_bboxes, patch_width, train_idx, mode):
                     merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + pixel_bboxes[j][2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
                     merged = True
                     break
-            if not merged:
-                pixel_bboxes[i][0]=train_idx
-                pixel_bboxes[i].append("nm")
-                merged_bboxes.append(pixel_bboxes[i])
+        if not merged:
+            pixel_bboxes[i][0]=train_idx
+            pixel_bboxes[i].append("nm")
+            merged_bboxes.append(pixel_bboxes[i])
         
     return merged_bboxes
 
@@ -489,7 +473,7 @@ if __name__ == "__main__":
     args.small_bbox_area_threshold = args.small_bbox_area_threshold or config['small_bbox_area_threshold']
     args.medium_bbox_area_threshold = args.medium_bbox_area_threshold or config['medium_bbox_area_threshold']
     args.number_of_patches = args.number_of_patches or config['number_of_patches']
-    args.patch_mode = args.patch_mode or config['Settings']['patch_mode']
+    args.patch_mode = args.patch_mode or config['patch_mode']
     args.overalpping_patches = args.overalpping_patches or config['overalpping_patches']
     args.image_resolution = args.image_resolution or config['image_resolution']
     args.output_image_dir = args.output_image_dir or config['output_image_dir']
@@ -497,19 +481,12 @@ if __name__ == "__main__":
     args.iou_threshold = args.iou_threshold or config['iou_threshold']
     args.box_format = args.box_format or config['box_format']
 
-    # Set other defaults from config file similarly
 
-    #/Users/chinya07/Downloads/openmv.png
     model = YOLO(args.model)
-    # model = YOLO('/Users/chinya07/Downloads/IDD_Train_V0_320x320.pt')
-
-
-    # class_name_mapping = {0: 'BIKE_LANE_MARKER', 1: 'TRAFFIC_SIGN', 2: 'SCOOTER', 3: 'CARS', 4: 'PERSONS', 5: 'BIKE', 6: 'ANIMAL'}
     class_name_mapping = config['class_name_mapping']
     total_class_counts = defaultdict(int)
     all_boxes = []
     train_idx = 0
-
 
     # Lists to hold categorized bounding boxes
     GT_small_boxes = []
@@ -528,12 +505,12 @@ if __name__ == "__main__":
     iou_threshold = args.iou_threshold
     box_format = args.box_format
 
+    # Initialize tqdm for overall progress
+    total_images = len(os.listdir(args.image_dir))
+    pbar = tqdm.tqdm(total=total_images, desc="Processing images")
+
     for image in sorted(os.listdir(args.image_dir)):        
         image_path = args.image_dir + image
-        create_patches(image_path, num_patches, mode, overlap)
-        dets, patch_width, patch_height = apply_model(num_patches, mode, args.output_patches_dir)
-        # print(f"dets look like this: {dets}")
-
 
         # Define the dimensions of the original image and patches
         original_img_width = resolution[0]  # Example width
@@ -543,13 +520,15 @@ if __name__ == "__main__":
             patch_height = original_img_height
         if mode == "grid":
             patch_width = original_img_width // int(math.sqrt(num_patches))
-            patch_height = original_img_height // int(math.sqrt(num_patches))           
+            patch_height = original_img_height // int(math.sqrt(num_patches))     
 
-    
+        create_patches(image_path, num_patches, mode, overlap, resolution, args.output_patches_dir)
+        dets, patch_width, patch_height = apply_model(num_patches, mode, patch_width, patch_height, args.output_patches_dir)
+        # print(f"dets look like this: {dets}")
 
         # Convert bboxes to pixel coordinates
         pixel_bboxes = convert_to_pixel_coords(dets, patch_width, patch_height, num_patches, mode)
-        print(f"bboxes in pixel coords are : -----____-----_____------: {pixel_bboxes}")
+        # print(f"bboxes in pixel coords are : -----____-----_____------: {pixel_bboxes}")
 
         # draw_bboxes_on_image(image_path,pixel_bboxes)
         # Merge bboxes that are split across adjacent patches
@@ -577,22 +556,14 @@ if __name__ == "__main__":
         else: 
             continue
 
-                         
-        # print("Normalized Bounding Boxes:")
-        # for bbox in normalized_bboxes:
-        #     print(bbox)
+        pbar.update(1)
 
-    # print(f"all boxes look like this: {len(all_boxes)}")
-
-
+    pbar.close()
 
     # Lists to hold segregated bounding boxes
     small_boxes = []
     medium_boxes = []
     large_boxes = []
-
-
-
 
     # Iterate over each frame's list of bounding boxes
 
@@ -632,8 +603,6 @@ if __name__ == "__main__":
 
 
 
-
-
     GT_medium_boxes = [box for box in GT_medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
     GT_small_boxes = [box for box in GT_small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
     GT_large_boxes = [box for box in GT_large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
@@ -644,7 +613,7 @@ if __name__ == "__main__":
 
 
     # print(f"GT_small_boxes look like this: {GT_small_boxes}")
-    print(f"Predicted small_boxes look like this: {small_boxes}")
+    # print(f"Predicted small_boxes look like this: {small_boxes}")
 
 
     mAP = mean_average_precision(
