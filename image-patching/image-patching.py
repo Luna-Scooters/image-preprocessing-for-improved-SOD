@@ -11,6 +11,8 @@ import csv
 import yaml
 import argparse
 import tqdm
+import time 
+
 
 def draw_gt_boxes(image, gt_boxes, color=(0, 255, 0), thickness=2):
     
@@ -263,7 +265,7 @@ def draw_bboxes(image, bboxes):
         else:
             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 1)
         # cv2.rectangle(image, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 2)
-        cv2.putText(image, f'{class_prob:.2f}', (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        # cv2.putText(image, f'{class_prob:.2f}', (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     return image
 
 
@@ -523,7 +525,9 @@ if __name__ == "__main__":
             patch_height = original_img_height // int(math.sqrt(num_patches))     
 
         create_patches(image_path, num_patches, mode, overlap, resolution, args.output_patches_dir)
+        start_time = time.time()
         dets, patch_width, patch_height = apply_model(num_patches, mode, patch_width, patch_height, args.output_patches_dir)
+        end_time = time.time()
         # print(f"dets look like this: {dets}")
 
         # Convert bboxes to pixel coordinates
@@ -556,6 +560,10 @@ if __name__ == "__main__":
         else: 
             continue
 
+        elapsed_time = (end_time - start_time)*1000
+
+        # Print the elapsed time
+        print("Time taken for one image:", elapsed_time, "ms")
         pbar.update(1)
 
     pbar.close()
