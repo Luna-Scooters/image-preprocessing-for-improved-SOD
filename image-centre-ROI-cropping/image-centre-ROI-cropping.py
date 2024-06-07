@@ -6,26 +6,12 @@ import os
 from collections import Counter
 import torch
 import csv 
+import yaml
+import argparse
+import tqdm
+import time 
 
-# 0.025539463385939598
-# 0.0253730621188879
 
-# =========================================================================================================================================================
-
-# Load the CSV file and create a dictionary mapping image names to zoom factors
-zoom_factors_dict = {}
-# with open('/Users/chinya07/Downloads/video1-manually-labelled-speed-info-images.csv', mode='r') as csvfile: 
-with open('/Users/chinya07/Downloads/unzoomed-video1-manually-labelled-speed-info-images-copy.csv', mode='r') as csvfile:
-    reader = csv.DictReader(csvfile)
-    for row in reader:
-        image_name = row['image_name']
-        zoom_factors_dict[image_name] = {
-            'left': float(row['left']),
-            'right': float(row['right']),
-            'top': float(row['top']),
-            'bottom': float(row['bottom'])
-        }
-# =========================================================================================================================================================
 
 def adjust_and_normalize_bbox(bbox, x1, y1, x2, y2, width, height):
     frame_id, class_id, class_probability, x_center, y_center, bbox_width, bbox_height = bbox
@@ -52,6 +38,7 @@ def adjust_and_normalize_bbox(bbox, x1, y1, x2, y2, width, height):
 
     return [frame_id, class_id, class_probability, norm_x_center, norm_y_center, norm_bbox_width, norm_bbox_height]
 
+
 def draw_gt_boxes(image, gt_boxes, color=(0, 255, 0), thickness=2):
     
     _, _, _, x_center, y_center, w, h = gt_boxes
@@ -60,376 +47,281 @@ def draw_gt_boxes(image, gt_boxes, color=(0, 255, 0), thickness=2):
     x2 = int((x_center + w / 2) * image.shape[1])
     y2 = int((y_center + h / 2) * image.shape[0])
     # cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
-# Thresholds for box sizes
-small_threshold = 0.0011827866719222222
-medium_threshold = 0.004552103950795999
-def calculate_area(bbox):
-    _,_,_,_,_, w, h = bbox
-    return w * h
 
 
 
-# Load the YOLOv8 model
-# model = YOLO('/Users/chinya07/Desktop/PROJECTS/PHD/YOLOV3_from_scratch/Machine-Learning-Collection/ML/Pytorch/object_detection/YOLOv3/INDIAN-TRAFFIC-DATASET/160-150-epochs-best.pt')
-model = YOLO('/Users/chinya07/Downloads/IDD_Train_V0_160x160.pt')
+def handling_GT(labels_directory, image_folder_path, output_folder_path, height, width):
+
+    GT_small_boxes = []
+    GT_medium_boxes = []
+    GT_large_boxes = []
+    total_small_medium_gt_box_temp_count = 0
+    # Process each label file
+    for frame_id, filename in enumerate(sorted(os.listdir(labels_directory))):
+        if filename.endswith('.txt'):
+            image_name = filename.replace('.txt', '.png')  # Match the label file to the corresponding image file
+            file_path = os.path.join(labels_directory, filename)
+
+            # Check if the corresponding image's ROI coordinates are available
+            if image_name in img_roi_dict and image_name in updates_frame_and_name:
+                image_full_name = image_folder_path + image_name
+                img = cv2.imread(image_full_name)
+                x1, y1, x2, y2 = img_roi_dict[image_name]
+                # cv2.rectangle(img, (x1,y1), (x2,y2), (0,0,0), 2)
+                small_medium_gt_box_temp_count = 0  #FOR % CALCULATION 
+                with open(file_path, 'r') as file:
+                    for line in file:
+                        parts = line.strip().split()
+                        if len(parts) == 5:
+                            class_id, x, y, w, h = int(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+                            class_prob = 1.0
+                            bbox = [frame_id, class_id, class_prob, x, y, w, h]
+                            # adjusted_bbox = bbox
+                            adjusted_bbox = adjust_and_normalize_bbox(bbox, x1, y1, x2, y2, width, height)
+                            # print(f"print adjusted box^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ {adjusted_bbox}")
+                            if adjusted_bbox:
+                                area = adjusted_bbox[5] * adjusted_bbox[6]  # w * h
+                                if area < args.small_bbox_area_threshold:
+                                    draw_gt_boxes(img, adjusted_bbox)
+                                    small_medium_gt_box_temp_count += 1
+                                    GT_small_boxes.append(adjusted_bbox)
+                                elif area < args.medium_bbox_area_threshold:
+                                    small_medium_gt_box_temp_count += 1
+                                    GT_medium_boxes.append(adjusted_bbox)
+                                else:
+                                    GT_large_boxes.append(adjusted_bbox)
+                # print("small_medium_gt_box_temp_count------------------->",small_medium_gt_box_temp_count)                    
+                total_small_medium_gt_box_temp_count += small_medium_gt_box_temp_count
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.7
+                font_color = (0, 255, 0)
+                line_type = 2
+                frame, total_predcited_objects = updates_frame_and_name[image_name]
+                total_percent = (total_predcited_objects/total_small_medium_gt_box_temp_count)*100
+                total_text = f"Total % of Objects Detected as compare to GT: {total_percent: .2f} %"
+                cv2.putText(frame, total_text, (15, 120), font, font_scale, font_color, line_type)  
+                output_image_path = os.path.join(output_folder_path, image_name)
+                cv2.imwrite(output_image_path, frame)      
 
 
-# class_name_mapping = {0: 'BIKE_LANE_MARKER', 1: 'TRAFFIC_SIGN', 2: 'SCOOTER', 3: 'CARS', 4: 'PERSONS', 5: 'BIKE', 6: 'ANIMAL'}
-class_name_mapping = {0: 'Car',
-  1: 'Bus',
-  2: 'Truck',
-  3: 'Motor_Bike',
-  4: 'Auto_rickshaw',
-  5: 'Bike',
-  6: 'People',
-  7: 'Animals',
-  8: 'Traffic_signs',
-  9: 'Scooter',
-  10: 'Traffic_light'}
-total_class_counts = defaultdict(int)
+    GT_medium_boxes = [box for box in GT_medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
+    GT_small_boxes = [box for box in GT_small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
+    GT_large_boxes = [box for box in GT_large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
 
-# Paths to the folder with images and the output folder
-image_folder_path = "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/RESIZED_images" #'/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/test_images'
-output_folder_path = '/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/RESIZED-CORRECTED-UNZOOMED'
-# output_folder_path_without_zoom = '/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/output_images_without_zoom'
-
-
-frame_number = 0
-all_boxes = []
-train_idx = 0
-updates_frame_and_name = {}
-
-img_roi_dict = {}
-
-# Create the output folder if it doesn't exist
-if not os.path.exists(output_folder_path):
-    os.makedirs(output_folder_path)
-
-
-total_detected_small_objects = 0
-
-# Iterate over the images in the folder
-for image_name in sorted(os.listdir(image_folder_path)):
-    small_objects_detected = 0
-    image_path = os.path.join(image_folder_path, image_name)
-    
-    # Read the image
-    frame = cv2.imread(image_path)
-    if frame is None:
-        continue
-
-    height, width, _ = frame.shape
-
-    if image_name in zoom_factors_dict:
-        factors = zoom_factors_dict[image_name]
-        left, right, top, bottom = factors['left'], factors['right'], factors['top'], factors['bottom']
-        left, right, top, bottom = left/100.0, right/100.0, top/100.0, bottom/100.0
-        print(f"left: {left}, right: {right}, top: {top}, bottom: {bottom}")
-        x1 = int(left * width)
-        y1 = int(top * height)
-        x2 = width - int(right * width)
-        y2 = height - int(bottom * height)
-        roi = np.copy(frame[y1:y2, x1:x2])
-        # cv2.imshow('FRAMW',frame)
-        # cv2.imshow('ROI',roi)
-        # key = cv2.waitKey(-1)
-        # if key == ord('q'):
-        #     exit()
-        
-        img_roi_dict[image_name] = [x1, y1, x2, y2]
-
-        print("roi shape each time ------>", roi.shape)      
-        # zoomed_frame = cv2.resize(roi, (width, height))
-    else:
-        roi = frame.copy()
-        x1, y1, x2, y2 = 0, 0, width, height
-    
-    results = model(roi)
-    detections = results[0].boxes.data
-
-
-    # cv2.rectangle(frame, (x1,y1), (x1+(x2-x1), y1+(y2-y1)), (0,0,0), 1)
-    cv2.rectangle(frame, (x1,y1), (x2,y2), (0,0,0), 2)
-
-    norm_boxes = results[0].boxes.xywhn.tolist()
-
-
-    
-
-    # Process each detection
-    for i, detection in enumerate(detections):
-
-        # Extract class ID and probability
-        class_id = detection[-1].int().item()  # Convert to Python int
-        class_prob = detection[-2].item()
-
-        # Normalized coordinates in the ROI
-        x_center, y_center, bbox_width, bbox_height = norm_boxes[i]
-
-        # Convert to pixel coordinates in the ROI
-        roi_x_center = x_center * (x2 - x1)
-        roi_y_center = y_center * (y2 - y1)
-        roi_width_pixel = bbox_width * (x2 - x1)
-        roi_height_pixel = bbox_height * (y2 - y1)
-
-        # Rescale to original image coordinates
-        original_x_center = roi_x_center + x1
-        original_y_center = roi_y_center + y1
-        original_width_pixel = roi_width_pixel
-        original_height_pixel = roi_height_pixel
-
-        # Normalize rescaled coordinates to original image size
-        norm_x_center = original_x_center / width
-        norm_y_center = original_y_center / height
-        norm_width = original_width_pixel / width
-        norm_height = original_height_pixel / height
-        
-        # Convert tensor values to floats and append to all_boxes
-        
-        box_info = [
-            train_idx, 
-            class_id, 
-            class_prob, 
-            norm_x_center,  # Already normalized
-            norm_y_center,  # Already normalized
-            norm_width,     # Already normalized
-            norm_height     # Already normalized
-        ]
-
-        all_boxes.append(box_info)      
-
-
-        # Convert to top-left coordinates for drawing
-        x = int(original_x_center - original_width_pixel / 2)
-        y = int(original_y_center - original_height_pixel / 2)
-        w = int(original_width_pixel)
-        h = int(original_height_pixel)
-
-        # Draw the bounding box on the original frame
-        area=calculate_area(box_info)
-        # print(f"AREA:--=-=-=-==-=-=-=-=-=-=-=: {area} and if its less than threhold {area<small_threshold}")
-        if area<medium_threshold:
-            small_objects_detected += 1
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        
-        total_detected_small_objects += small_objects_detected 
-                # Add the count of small objects to the top of the image
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    text = f"Small Objects Detected: {small_objects_detected}"
-    position = (15, 40)
-    font_scale = 0.7
-    font_color = (0, 255, 0)
-    line_type = 2
-
-    cv2.putText(frame, text, position, font, font_scale, font_color, line_type)
-
-
-    # Add the total count of objects detected so far
-    total_text = f"Total Objects Detected So Far: {total_detected_small_objects}"
-    cv2.putText(frame, total_text, (15, 80), font, font_scale, font_color, line_type)   
-
-
-    class_id_temp = []
-    class_prob_temp = []
-    # Extract class IDs and convert to integers
-    class_ids = results[0].boxes.data[:, -1].int()
-    class_probs = results[0].boxes.data[:, -2]
-    class_id_temp = class_ids.tolist()
-    class_prob_temp = class_probs.tolist()
-    
-
-    train_idx += 1       
-
-    # Count occurrences of each class ID
-    class_counts = defaultdict(int)
-    for class_id in class_ids:
-        class_counts[class_id.item()] += 1
-
-    # Map class IDs to class names and update total counts
-    for class_id, count in class_counts.items():
-        class_name = class_name_mapping.get(class_id, "Unknown")
-        total_class_counts[class_name] += count
-
-
-
-    
-    # output_image_path = os.path.join(output_folder_path, image_name)
-    updates_frame_and_name[image_name] = (frame, total_detected_small_objects)
-    # cv2.imwrite(output_image_path, frame)
-
-
-# print("IMAGE AND ROI DICT:----->",img_roi_dict)
-# Print the total counts for each class
-for class_name, count in total_class_counts.items():
-    print(f"------------{class_name}: {count} objects detected")
-# print(all_boxes)
-
-# print("ALL BOXES:", all_boxes[:5])
-
-
-
-#ADJUSTING GT BOXES AS PER THE ZOOMING ROI FOR FAIR MAP CALCULATION
-
-
-
-
-#SEGREGATING MODEL PREDICTIONS ON ZOOMED IMAGES INTO SMALL, MEDIUM AND LARGE BOXES
-
-
-#CALCULATED THE SMALL AND MEDIUM AND LARGE BOX AREA THREHOLD BY CALCULATING PERCENTILE
-
-
-# Thresholds for box sizes
-small_threshold = 0.0011827866719222222
-medium_threshold = 0.004552103950795999
-
-# Lists to hold segregated bounding boxes
-small_boxes = []
-medium_boxes = []
-large_boxes = []
+    return  GT_small_boxes, GT_medium_boxes, GT_large_boxes
 
 # Function to calculate area of a bounding box
 def calculate_area(bbox):
     _,_,_,_,_, w, h = bbox
     return w * h
 
-# Iterate over each frame's list of bounding boxes
 
-for bbox in all_boxes:
-    area = calculate_area(bbox)
-    if area < small_threshold:
-        small_boxes.append(bbox)
-    elif area < medium_threshold:
-        medium_boxes.append(bbox)
-    else:
-        large_boxes.append(bbox)
+def zooming_centre_ROI(image_folder_path, resolution, zoom_factors_dict, model, display_only_small_boxes, train_idx):
 
+    total_detected_small_objects = 0
 
-# print(f"small boxes: ------> {small_boxes[:2]}, medium boxes: ------> {medium_boxes[:2]}, large boxes: ------> {large_boxes[:2]}")
+    # Iterate over the images in the folder
+    for image_name in sorted(os.listdir(image_folder_path)):
+        small_objects_detected = 0
+        image_path = os.path.join(image_folder_path, image_name)
+        
+        # Read the image
+        original_frame = cv2.imread(image_path)
+        if original_frame is None:
+            continue
 
-medium_boxes = [box for box in medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
-small_boxes = [box for box in small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
-large_boxes = [box for box in large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
+        frame = cv2.resize(original_frame, (resolution[0], resolution[1]))
+        height, width, _ = frame.shape
 
-
-# print("medium Boxes:----------->", medium_boxes[:20])
-
-
-
-
-
-#SEGREGATING GROUND TRUTHS INTO SMALL, MEDIUM AND LARGE BOXES
-
-
-
-# Directory containing label files
-labels_directory = '/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/test_labels'  # Replace with your directory path
-
-# Class name mapping
-# class_name_mapping = {0: 'BIKE_LANE_MARKER', 1: 'TRAFFIC_SIGN', 2: 'SCOOTER', 3: 'CARS', 4: 'PERSONS', 5: 'BIKE', 6: 'ANIMAL'}
-class_name_mapping = {0: 'Car',
-  1: 'Bus',
-  2: 'Truck',
-  3: 'Motor_Bike',
-  4: 'Auto_rickshaw',
-  5: 'Bike',
-  6: 'People',
-  7: 'Animals',
-  8: 'Traffic_signs',
-  9: 'Scooter',
-  10: 'Traffic_light'}
-
-# Thresholds for box sizes
-small_threshold = 0.0011827866719222222
-medium_threshold = 0.004552103950795999
-
-# Lists to hold categorized bounding boxes
-GT_small_boxes = []
-GT_medium_boxes = []
-GT_large_boxes = []
-
-# Function to calculate area of a bounding box
-def calculate_area(w, h):
-    return w * h
-
-
-# print("Start^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
-total_small_medium_gt_box_temp_count = 0
-# Process each label file
-for frame_id, filename in enumerate(sorted(os.listdir(labels_directory))):
-    if filename.endswith('.txt'):
-        image_name = filename.replace('.txt', '.png')  # Match the label file to the corresponding image file
-        file_path = os.path.join(labels_directory, filename)
-
-        # Check if the corresponding image's ROI coordinates are available
-        if image_name in img_roi_dict and image_name in updates_frame_and_name:
-            image_full_name = "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/test_images/" + image_name
-            # print("IMAGE NAME------>", image_name)
-            img = cv2.imread(image_full_name)
-            x1, y1, x2, y2 = img_roi_dict[image_name]
-            # cv2.rectangle(img, (x1,y1), (x2,y2), (0,0,0), 2)
-            small_medium_gt_box_temp_count = 0  #FOR % CALCULATION 
-            with open(file_path, 'r') as file:
-                for line in file:
-                    parts = line.strip().split()
-                    if len(parts) == 5:
-                        class_id, x, y, w, h = int(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
-                        class_prob = 1.0
-                        bbox = [frame_id, class_id, class_prob, x, y, w, h]
-                        # adjusted_bbox = bbox
-                        adjusted_bbox = adjust_and_normalize_bbox(bbox, x1, y1, x2, y2, width, height)
-                        # print(f"print adjusted box^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ {adjusted_bbox}")
-                        if adjusted_bbox:
-                            area = calculate_area(adjusted_bbox[5], adjusted_bbox[6])
-                            if area < small_threshold:
-                                draw_gt_boxes(img, adjusted_bbox)
-                                small_medium_gt_box_temp_count += 1
-                                GT_small_boxes.append(adjusted_bbox)
-                            elif area < medium_threshold:
-                                small_medium_gt_box_temp_count += 1
-                                GT_medium_boxes.append(adjusted_bbox)
-                            else:
-                                GT_large_boxes.append(adjusted_bbox)
-            # print("small_medium_gt_box_temp_count------------------->",small_medium_gt_box_temp_count)                    
-            total_small_medium_gt_box_temp_count += small_medium_gt_box_temp_count
+        if image_name in zoom_factors_dict:
+            factors = zoom_factors_dict[image_name]
+            left, right, top, bottom = factors['left'], factors['right'], factors['top'], factors['bottom']
+            left, right, top, bottom = left/100.0, right/100.0, top/100.0, bottom/100.0
+            print(f"left: {left}, right: {right}, top: {top}, bottom: {bottom}")
+            print(f"Train Index: {train_idx}")
+            x1 = int(left * width)
+            y1 = int(top * height)
+            x2 = width - int(right * width)
+            y2 = height - int(bottom * height)
+            roi = np.copy(frame[y1:y2, x1:x2])
+            # cv2.imshow('FRAMW',frame)
+            # cv2.imshow('ROI',roi)
+            # key = cv2.waitKey(-1)
+            # if key == ord('q'):
+            #     exit()
             
-            frame, total_predcited_objects = updates_frame_and_name[image_name]
-            total_percent = (total_predcited_objects/total_small_medium_gt_box_temp_count)*100
-            total_text = f"Total % of Objects Detected as compare to GT: {total_percent: .2f} %"
-            cv2.putText(frame, total_text, (15, 120), font, font_scale, font_color, line_type)  
-            output_image_path = os.path.join(output_folder_path, image_name)
-            cv2.imwrite(output_image_path, frame)      
-            # Draw adjusted GT boxes on the image
-                            # draw_gt_boxes(img, adjusted_bbox)
+            img_roi_dict[image_name] = [x1, y1, x2, y2]
 
-            # Display the image with drawn GT boxes
-            # cv2.imshow('Adjusted GT Boxes', img)
-            # cv2.waitKey(0)
-
-# print("Stop^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
-
-# Output the categorized boxes
-# print("medium Boxes:----------->", medium_boxes[:2])
-# print("GT medium Boxes:----------->", GT_medium_boxes[:2])
-
-# print("GT medium Boxes before filtering:----------->", GT_medium_boxes[:20])
-
-#FOR ONLY CLASSES "CAR", "BIKE", "PEOPLE"
-
-GT_medium_boxes = [box for box in GT_medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
-GT_small_boxes = [box for box in GT_small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
-GT_large_boxes = [box for box in GT_large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
+            print("roi shape each time ------>", roi.shape)      
+            # zoomed_frame = cv2.resize(roi, (width, height))
+        else:
+            roi = frame.copy()
+            x1, y1, x2, y2 = 0, 0, width, height
+        
+        results = model(roi)
+        detections = results[0].boxes.data
 
 
-# print("LENGTH of GT medium Boxes:----------->", len(GT_medium_boxes))
-# print("LENGTH of GT small Boxes:----------->", len(GT_small_boxes))
+        # cv2.rectangle(frame, (x1,y1), (x1+(x2-x1), y1+(y2-y1)), (0,0,0), 1)
+        cv2.rectangle(frame, (x1,y1), (x2,y2), (0,0,0), 2)
+
+        norm_boxes = results[0].boxes.xywhn.tolist()
+
+
+        
+
+        # Process each detection
+        for i, detection in enumerate(detections):
+
+            # Extract class ID and probability
+            class_id = detection[-1].int().item()  # Convert to Python int
+            class_prob = detection[-2].item()
+
+            # Normalized coordinates in the ROI
+            x_center, y_center, bbox_width, bbox_height = norm_boxes[i]
+
+            # Convert to pixel coordinates in the ROI
+            roi_x_center = x_center * (x2 - x1)
+            roi_y_center = y_center * (y2 - y1)
+            roi_width_pixel = bbox_width * (x2 - x1)
+            roi_height_pixel = bbox_height * (y2 - y1)
+
+            # Rescale to original image coordinates
+            original_x_center = roi_x_center + x1
+            original_y_center = roi_y_center + y1
+            original_width_pixel = roi_width_pixel
+            original_height_pixel = roi_height_pixel
+
+            # Normalize rescaled coordinates to original image size
+            norm_x_center = original_x_center / width
+            norm_y_center = original_y_center / height
+            norm_width = original_width_pixel / width
+            norm_height = original_height_pixel / height
+            
+            # Convert tensor values to floats and append to all_boxes
+            
+            box_info = [
+                train_idx, 
+                class_id, 
+                class_prob, 
+                norm_x_center,  # Already normalized
+                norm_y_center,  # Already normalized
+                norm_width,     # Already normalized
+                norm_height     # Already normalized
+            ]
+
+            all_boxes.append(box_info)      
+
+
+            # Convert to top-left coordinates for drawing
+            x = int(original_x_center - original_width_pixel / 2)
+            y = int(original_y_center - original_height_pixel / 2)
+            w = int(original_width_pixel)
+            h = int(original_height_pixel)
+
+            # Draw the bounding box on the original frame
+            area=calculate_area(box_info)
+            if area <= args.medium_bbox_area_threshold:
+                small_objects_detected += 1
+                if display_only_small_boxes:
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            if not display_only_small_boxes:        
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            
+            total_detected_small_objects += small_objects_detected 
+            # Add the count of small objects to the top of the image
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        text = f"Small Objects Detected: {small_objects_detected}"
+        position = (15, 40)
+        font_scale = 0.7
+        font_color = (0, 255, 0)
+        line_type = 2
+
+        cv2.putText(frame, text, position, font, font_scale, font_color, line_type)
+
+
+        # Add the total count of objects detected so far
+        total_text = f"Total Objects Detected So Far: {total_detected_small_objects}"
+        cv2.putText(frame, total_text, (15, 80), font, font_scale, font_color, line_type)   
+
+
+        class_id_temp = []
+        class_prob_temp = []
+        # Extract class IDs and convert to integers
+        class_ids = results[0].boxes.data[:, -1].int()
+        class_probs = results[0].boxes.data[:, -2]
+        class_id_temp = class_ids.tolist()
+        class_prob_temp = class_probs.tolist()
+        
+
+        train_idx += 1       
+
+        # Count occurrences of each class ID
+        class_counts = defaultdict(int)
+        for class_id in class_ids:
+            class_counts[class_id.item()] += 1
+
+        # Map class IDs to class names and update total counts
+        for class_id, count in class_counts.items():
+            class_name = class_name_mapping.get(class_id, "Unknown")
+            total_class_counts[class_name] += count
+
+
+
+        
+        # output_image_path = os.path.join(output_folder_path, image_name)
+        updates_frame_and_name[image_name] = (frame, total_detected_small_objects)
+        # cv2.imwrite(output_image_path, frame)
+
+
+    # Print the total counts for each class
+    for class_name, count in total_class_counts.items():
+        print(f"------------{class_name}: {count} objects detected")
+    # print(all_boxes)
+
+    # print("ALL BOXES:", all_boxes[:5])
+
+    #ADJUSTING GT BOXES AS PER THE ZOOMING ROI FOR FAIR MAP CALCULATION
+
+    #SEGREGATING MODEL PREDICTIONS ON ZOOMED IMAGES INTO SMALL, MEDIUM AND LARGE BOXES
+
+    #CALCULATED THE SMALL AND MEDIUM AND LARGE BOX AREA THREHOLD BY CALCULATING PERCENTILE
+
+    # Thresholds for box sizes
+    return height, width
+
+
+def separate_boxes_as_per_size(all_boxes):
+
+    # Iterate over each frame's list of bounding boxes
+    small_boxes= []
+    medium_boxes= []
+    large_boxes= []
+    for bbox in all_boxes:
+        area = calculate_area(bbox)
+        if area < args.small_bbox_area_threshold:
+            small_boxes.append(bbox)
+        elif area < args.medium_bbox_area_threshold:
+            medium_boxes.append(bbox)
+        else:
+            large_boxes.append(bbox)
+
+
+    # print(f"small boxes: ------> {small_boxes[:2]}, medium boxes: ------> {medium_boxes[:2]}, large boxes: ------> {large_boxes[:2]}")
+
+    medium_boxes = [box for box in medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
+    small_boxes = [box for box in small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
+    large_boxes = [box for box in large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
+
+    return small_boxes, medium_boxes, large_boxes
+
 
 
 #IOU CODE: https://github.com/aladdinpersson/Machine-Learning-Collection/blob/master/ML/Pytorch/object_detection/YOLOv3/
 
 
-def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
+def intersection_over_union(boxes_preds, boxes_labels, box_format):
     """
     Video explanation of this function:
     https://youtu.be/XXYG5ZWtjj0
@@ -481,7 +373,7 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
 #MAP CALCULATION CODE: https://github.com/aladdinpersson/Machine-Learning-Collection/blob/master/ML/Pytorch/object_detection/YOLOv3/
 
 def mean_average_precision(
-    pred_boxes, true_boxes, iou_threshold=0.5, box_format="midpoint", num_classes=11
+    pred_boxes, true_boxes, iou_threshold, box_format, mAP_num_classes
 ):
     """
     Video explanation of this function:
@@ -495,7 +387,7 @@ def mean_average_precision(
         true_boxes (list): Similar as pred_boxes except all the correct ones
         iou_threshold (float): threshold where predicted bboxes is correct
         box_format (str): "midpoint" or "corners" used to specify bboxes
-        num_classes (int): number of classes
+        mAP_num_classes (int): number of classes to calculate mAP
 
     Returns:
         float: mAP value across all classes given a specific IoU threshold
@@ -507,7 +399,7 @@ def mean_average_precision(
     # used for numerical stability later on
     epsilon = 1e-6
 
-    for c in range(num_classes):
+    for c in range(mAP_num_classes):
         detections = []
         ground_truths = []
 
@@ -591,80 +483,141 @@ def mean_average_precision(
     return sum(average_precisions) / len(average_precisions)
 
 
+def decorative_message(function_name):
+    message = f"Function '{function_name}' has been executed!"
+    decoration = "*" * (len(message) + 4)
+    print(decoration)
+    print(f"* {message} *")
+    print(decoration)
 
-pred_boxes = medium_boxes
-true_boxes = GT_medium_boxes
 
-mAP = mean_average_precision(
-    pred_boxes,
-    true_boxes,
-    iou_threshold=0.25,
-    box_format="midpoint",
-    num_classes=11,
-)
-print(f"mAP for Medium boxes ========:> {mAP.item()}")
 
-pred_boxes = small_boxes
-true_boxes = GT_small_boxes
+if __name__ == "__main__":
 
-mAP = mean_average_precision(
-    pred_boxes,
-    true_boxes,
-    iou_threshold=0.25,
-    box_format="midpoint",
-    num_classes=11,
-)
-print(f"mAP for small boxes ========:> {mAP.item()}")
+    with open('/Users/chinya07/Desktop/PROJECTS/PHD/image-preprocessing-for-improved-SOD/image-preprocessing-for-improved-SOD/image-patching/ROI_zooming_config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
 
-pred_boxes = large_boxes
-true_boxes = GT_large_boxes
 
-mAP = mean_average_precision(
-    pred_boxes,
-    true_boxes,
-    iou_threshold=0.25,
-    box_format="midpoint",
-    num_classes=11,
-)
-print(f"mAP for large boxes ========:> {mAP.item()}")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Image patching arg parser')
 
-pred_boxes = medium_boxes
-true_boxes = GT_medium_boxes
+    # Add arguments
+    parser.add_argument('--dummy_speed_info_csv', type=str, help='dummy speed info csv path.')
+    parser.add_argument('--no_speed_csv', type=str, help='no speed csv path.')
+    parser.add_argument('--model', type=str, help='model path.')
+    parser.add_argument('--image_dir', type=str, help='Path to the input images dir.')
+    parser.add_argument('--output_folder_path', type=str, help='Path to the output folder.')
+    parser.add_argument('--GT_label_dir', type=str, help='Path to the GT labels dir.')
+    parser.add_argument('--small_bbox_area_threshold', type=float, help='Small bounding box area thresholds as per COCO dataset.')
+    parser.add_argument('--medium_bbox_area_threshold', type=float, help='Medium bounding box area thresholds as per COCO dataset.')
+    parser.add_argument('--image_resolution', type=int, help='image resolution in [w,h] format.')
+    parser.add_argument('--mAP_num_classes', type=int, help='how many number of classes you want to calculate mAP with.')
+    parser.add_argument('--iou_threshold', type=float, help='iou_threshold for mAP.')
+    parser.add_argument('--box_format', type=str, help='box_format for mAP.')
+    parser.add_argument('--display_only_small_boxes', type=str, help='display_only_small_boxes flag to display only small or all the boxes.')
+    parser.add_argument('--zoom', type=bool, help='zoom or normal.')
+    # Add more arguments as needed
 
-mAP = mean_average_precision(
-    pred_boxes,
-    true_boxes,
-    iou_threshold=0.5,
-    box_format="midpoint",
-    num_classes=11,
-)
-print(f"mAP for Medium boxes ========:> {mAP.item()}")
+    args = parser.parse_args()
 
-pred_boxes = small_boxes
-true_boxes = GT_small_boxes
+    # Set defaults from config file
+    args.dummy_speed_info_csv = args.dummy_speed_info_csv or config['dummy_speed_info_csv']
+    args.no_speed_csv = args.no_speed_csv or config['no_speed_csv']
+    args.model = args.model or config['model']
+    args.image_dir = args.image_dir or config['image_dir']
+    args.output_folder_path = args.output_folder_path or config['output_folder_path']
+    args.GT_label_dir = args.GT_label_dir or config['GT_label_dir']
+    args.small_bbox_area_threshold = args.small_bbox_area_threshold or config['small_bbox_area_threshold']
+    args.medium_bbox_area_threshold = args.medium_bbox_area_threshold or config['medium_bbox_area_threshold']
+    args.image_resolution = args.image_resolution or config['image_resolution']
+    args.mAP_num_classes = args.mAP_num_classes or config['mAP_num_classes']
+    args.iou_threshold = args.iou_threshold or config['iou_threshold']
+    args.box_format = args.box_format or config['box_format']
+    args.display_only_small_boxes = args.display_only_small_boxes or config['display_only_small_boxes']
+    args.zoom = args.zoom or config['zoom']
 
-mAP = mean_average_precision(
-    pred_boxes,
-    true_boxes,
-    iou_threshold=0.5,
-    box_format="midpoint",
-    num_classes=11,
-)
-print(f"mAP for small boxes ========:> {mAP.item()}")
+    # =========================================================================================================================================================
 
-pred_boxes = large_boxes
-true_boxes = GT_large_boxes
+    # Load the CSV file and create a dictionary mapping image names to zoom factors
+    zoom_factors_dict = {}
 
-mAP = mean_average_precision(
-    pred_boxes,
-    true_boxes,
-    iou_threshold=0.5,
-    box_format="midpoint",
-    num_classes=11,
-)
-print(f"mAP for large boxes ========:> {mAP.item()}")
+    csv_file_path = args.dummy_speed_info_csv if args.zoom else args.no_speed_csv
 
-# 1. RESIZE THE BBOXES BACK TO THE ORIGINAL SIZE 
-# 2. CALCULATE MAP ONLY FOR FIRST 3-4 CLASSES 
+    with open(csv_file_path, mode='r') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            image_name = row['image_name']
+            zoom_factors_dict[image_name] = {
+                'left': float(row['left']),
+                'right': float(row['right']),
+                'top': float(row['top']),
+                'bottom': float(row['bottom'])
+            }
+    # =========================================================================================================================================================
 
-# 3. ADJUST THE GT BOUNDING BOXES ACCORDING TO THE ROI AND MEASURE MAP
+
+    # Load the YOLOv8 model
+    model = YOLO(args.model)
+
+    class_name_mapping = config['class_name_mapping']
+    total_class_counts = defaultdict(int)
+
+    # Paths to the folder with images and the output folder
+    image_folder_path = args.image_dir 
+    output_folder_path = args.output_folder_path
+    labels_directory = args.GT_label_dir
+    # output_folder_path_without_zoom = '/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/output_images_without_zoom'
+
+    resolution = args.image_resolution
+    mAP_num_classes = args.mAP_num_classes
+    iou_threshold = args.iou_threshold
+    box_format = args.box_format    
+    display_only_small_boxes = args.display_only_small_boxes
+    frame_number = 0
+    all_boxes = []
+    train_idx = 0
+    updates_frame_and_name = {}
+    img_roi_dict = {}
+
+
+    # Create the output folder if it doesn't exist
+    if not os.path.exists(output_folder_path):
+        os.makedirs(output_folder_path)
+
+    height, width = zooming_centre_ROI(image_folder_path, resolution, zoom_factors_dict, model, display_only_small_boxes, train_idx)
+    decorative_message("zooming_centre_ROI")
+
+    small_boxes, medium_boxes, large_boxes = separate_boxes_as_per_size(all_boxes)
+    decorative_message("separate_boxes_as_per_size")
+
+    GT_small_boxes, GT_medium_boxes, GT_large_boxes = handling_GT(labels_directory, image_folder_path, output_folder_path, height, width)
+    decorative_message("handling_GT")
+
+
+    mAP = mean_average_precision(
+    small_boxes,
+    GT_small_boxes,
+    iou_threshold,
+    box_format,
+    mAP_num_classes,
+    )
+    print(f"mAP for Small boxes ========:> {mAP.item()}")
+
+
+    mAP = mean_average_precision(
+    medium_boxes,
+    GT_medium_boxes,
+    iou_threshold,
+    box_format,
+    mAP_num_classes,
+    )
+    print(f"mAP for Medium boxes ========:> {mAP.item()}")
+
+    mAP = mean_average_precision(
+    large_boxes,
+    GT_large_boxes,
+    iou_threshold,
+    box_format,
+    mAP_num_classes,
+    )
+    print(f"mAP for Large boxes ========:> {mAP.item()}")        
