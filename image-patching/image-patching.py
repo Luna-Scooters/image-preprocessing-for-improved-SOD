@@ -194,8 +194,9 @@ def convert_to_pixel_coords(dets, patch_width, patch_height, num_patches, mode):
     return pixel_coords
 
 # Merge bounding boxes if they are split across adjacent patches
-def merge_bboxes(pixel_bboxes, patch_width, train_idx, mode):
+def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches, mode):
     print("train_idx: ", train_idx)
+    num_patches_per_row = int(math.sqrt(num_patches))
     merged_bboxes = []
     pixel_bboxes.sort(key=lambda x: (x[0], x[3]))  # Sort by patch_index and x_min
     merged = False
@@ -220,7 +221,9 @@ def merge_bboxes(pixel_bboxes, patch_width, train_idx, mode):
             elif mode == "grid":
                 if (pixel_bboxes[i][1] == pixel_bboxes[j][1]  # Same class
                     and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent row
-                    and abs(pixel_bboxes[i][5] - pixel_bboxes[j][3]) < 5):  # Check 5-pixel margin between patches
+                    or pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row # Adjacent column
+                    and abs(pixel_bboxes[i][5] - pixel_bboxes[j][3]) < 5
+                    or abs(pixel_bboxes[i][6] - pixel_bboxes[j][4]) < 5):  # Check 5-pixel margin between patches
                     # Merge the boxes
                     new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
                     new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
@@ -536,7 +539,7 @@ if __name__ == "__main__":
 
         # draw_bboxes_on_image(image_path,pixel_bboxes)
         # Merge bboxes that are split across adjacent patches
-        merged_bboxes = merge_bboxes(pixel_bboxes, patch_width, train_idx, mode)
+        merged_bboxes = merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches, mode)
         # print(f"merged bboxes in pixel coords are : -----____-----_____------: {merged_bboxes}")
         # Convert merged bboxes back to normalized coordinates
         normalized_bboxes = convert_to_normalized_coords(merged_bboxes, original_img_width, original_img_height)
