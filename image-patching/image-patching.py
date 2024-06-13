@@ -132,28 +132,6 @@ def apply_model(num_patches, mode, patch_width, patch_height, output_dir):
     return results, patch_width, patch_height
 
 
-
-# def convert_to_pixel_coords(dets, patch_width, patch_height, num_patches_per_side):
-#     pixel_coords = []
-#     for bbox in dets:
-#         patch_index, class_id, class_prob, x, y, w, h = bbox
-        
-#         # Adjust patch_index to be 0-based for calculation
-#         patch_index -= 1
-        
-#         # Calculate the offset based on the patch index
-#         offset_x = (patch_index % num_patches_per_side) * patch_width
-#         offset_y = (patch_index // num_patches_per_side) * patch_height
-        
-#         # Calculate pixel coordinates within the patch and add the offset
-#         x_min = (x - w / 2) * patch_width + offset_x
-#         y_min = (y - h / 2) * patch_height + offset_y
-#         x_max = (x + w / 2) * patch_width + offset_x
-#         y_max = (y + h / 2) * patch_height + offset_y
-        
-#         pixel_coords.append([patch_index + 1, class_id, class_prob, x_min, y_min, x_max, y_max])
-    
-#     return pixel_coords
 def convert_to_pixel_coords(dets, patch_width, patch_height, num_patches, mode):
     pixel_coords = []
     for bbox in dets:
@@ -192,12 +170,59 @@ def convert_to_pixel_coords(dets, patch_width, patch_height, num_patches, mode):
             pixel_coords.append([patch_index + 1, class_id, class_prob, x_min, y_min, x_max, y_max])
     
     return pixel_coords
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-# Merge bounding boxes if they are split across adjacent patches
-def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches, mode):
-    print("train_idx: ", train_idx)
-    num_patches_per_row = int(math.sqrt(num_patches))
+# # Merge bounding boxes if they are split across adjacent patches
+# def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches, mode):
+#     print("train_idx: ", train_idx)
+#     num_patches_per_row = int(math.sqrt(num_patches))
+#     merged_bboxes = []
+#     pixel_bboxes.sort(key=lambda x: (x[0], x[3]))  # Sort by patch_index and x_min
+#     merged = False
+#     for i in range(len(pixel_bboxes)):
+#         if merged:
+#             merged = False
+#             continue
+
+#         for j in range(i + 1, len(pixel_bboxes)):
+#             if mode == "vertical":
+#                 if (pixel_bboxes[i][1] == pixel_bboxes[j][1]  # Same class
+#                     and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent patches
+#                     and abs(pixel_bboxes[i][6] - pixel_bboxes[j][4]) < 5):  # Check 5-pixel margin between patches
+#                     # Merge the boxes
+#                     new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
+#                     new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
+#                     new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
+#                     new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
+#                     merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + pixel_bboxes[j][2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+#                     merged = True
+#                     break
+#             elif mode == "grid":
+#                 if (pixel_bboxes[i][1] == pixel_bboxes[j][1]  # Same class
+#                     and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent row
+#                     or pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row # Adjacent column
+#                     and abs(pixel_bboxes[i][5] - pixel_bboxes[j][3]) < 5
+#                     or abs(pixel_bboxes[i][6] - pixel_bboxes[j][4]) < 5):  # Check 5-pixel margin between patches
+#                     # Merge the boxes
+#                     new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
+#                     new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
+#                     new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
+#                     new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
+#                     merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + pixel_bboxes[j][2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+#                     merged = True
+#                     break
+#         if not merged:
+#             pixel_bboxes[i][0]=train_idx
+#             pixel_bboxes[i].append("nm")
+#             merged_bboxes.append(pixel_bboxes[i])
+        
+#     return merged_bboxes
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%----OLD MERGE BOXES LOGIC COMPARING WITH EVERY BOXES----%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+
+def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches):
     merged_bboxes = []
+    num_patches_per_row = int(math.sqrt(num_patches))
     pixel_bboxes.sort(key=lambda x: (x[0], x[3]))  # Sort by patch_index and x_min
     merged = False
     for i in range(len(pixel_bboxes)):
@@ -206,38 +231,134 @@ def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches, mode):
             continue
 
         for j in range(i + 1, len(pixel_bboxes)):
-            if mode == "vertical":
-                if (pixel_bboxes[i][1] == pixel_bboxes[j][1]  # Same class
+            if (pixel_bboxes[i][1] == pixel_bboxes[j][1]  # Same class
+                    and pixel_bboxes[j][2] < 0.60
+                    and abs(((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4])) -
+                        ((pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))) < 
+                        int(0.5 * (max((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4]), 
+                        (pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))))
                     and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent patches
-                    and abs(pixel_bboxes[i][6] - pixel_bboxes[j][4]) < 5):  # Check 5-pixel margin between patches
-                    # Merge the boxes
-                    new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
-                    new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
-                    new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
-                    new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
-                    merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + pixel_bboxes[j][2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
-                    merged = True
-                    break
-            elif mode == "grid":
-                if (pixel_bboxes[i][1] == pixel_bboxes[j][1]  # Same class
-                    and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent row
-                    or pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row # Adjacent column
-                    and abs(pixel_bboxes[i][5] - pixel_bboxes[j][3]) < 5
-                    or abs(pixel_bboxes[i][6] - pixel_bboxes[j][4]) < 5):  # Check 5-pixel margin between patches
-                    # Merge the boxes
-                    new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
-                    new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
-                    new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
-                    new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
-                    merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + pixel_bboxes[j][2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
-                    merged = True
-                    break
+                    or pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row
+                    and abs(pixel_bboxes[i][5] - patch_width * (pixel_bboxes[i][0]))<5  # Right edge of left patch
+                    and abs(pixel_bboxes[j][3] - patch_width * (pixel_bboxes[i][0]))<5
+                    or abs(pixel_bboxes[i][6] - patch_height * (pixel_bboxes[i][0]))<5  # Right edge of left patch
+                    or abs(pixel_bboxes[j][4] - patch_height * (pixel_bboxes[i][0]))<5                    ):  # Left edge of right patch                            
+                # Merge the boxes
+
+                new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
+                new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
+                new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
+                new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
+                merged_bboxes.append([pixel_bboxes[i][0], pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+                merged = True
+                break
+
+            # elif (pixel_bboxes[i][1] != pixel_bboxes[j][1]  # Same class
+            #         and pixel_bboxes[j][2] < 0.40
+            #         and abs(((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4])) -
+            #             ((pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))) < 
+            #             int(0.5 * (max((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4]), 
+            #             (pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))))                    
+            #         and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent patches
+            #         or pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row
+            #         and abs(pixel_bboxes[i][5] - patch_width * (pixel_bboxes[i][0]))<5  # Right edge of left patch
+            #         and abs(pixel_bboxes[j][3] - patch_width * (pixel_bboxes[i][0]))<5
+            #         or abs(pixel_bboxes[i][6] - patch_height * (pixel_bboxes[i][0]))<5  # Right edge of left patch
+            #         or abs(pixel_bboxes[j][4] - patch_height * (pixel_bboxes[i][0]))<5):                         
+            #     # Merge the boxes
+
+            #     new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
+            #     new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
+            #     new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
+            #     new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
+            #     merged_bboxes.append([pixel_bboxes[i][0], pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+            #     merged = True
+            #     break       
+
         if not merged:
-            pixel_bboxes[i][0]=train_idx
             pixel_bboxes[i].append("nm")
             merged_bboxes.append(pixel_bboxes[i])
-        
+
     return merged_bboxes
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%----UPDATED MERGE BOXES LOGIC COMPARING WITH NEIGHBOURING BOXES----%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+
+# Merge bounding boxes if they are split across adjacent patches
+# def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches, mode):
+#     print("train_idx: ", train_idx)
+#     print("Length of pixel boxes: ", len(pixel_bboxes))
+#     num_patches_per_row = int(math.sqrt(num_patches))
+#     merged_bboxes = []
+#     pixel_bboxes.sort(key=lambda x: (x[0], x[3]))  # Sort by patch_index and x_min
+#     merged = False
+
+#     for i in range(len(pixel_bboxes)):
+#         if merged:
+#             merged = False
+#             continue
+#         if mode == "vertical":
+
+#             if (pixel_bboxes[i][1] == pixel_bboxes[i+1][1]  # Same class
+#                 and abs(pixel_bboxes[i][6] - pixel_bboxes[i+1][4]) < 5):  # Check 5-pixel margin between patches
+#                 # Merge the boxes
+#                 new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[i+1][3])
+#                 new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[i+1][4])
+#                 new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[i+1][5])
+#                 new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[i+1][6])
+#                 merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + pixel_bboxes[i+1][2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+#                 merged = True
+#                 break
+
+#         elif mode == "grid":
+            
+#             if pixel_bboxes[i][0] <= (num_patches - num_patches_per_row):
+                
+#                 if pixel_bboxes[i][0] % (num_patches - num_patches_per_row) != 0 and pixel_bboxes[i][0] % num_patches_per_row < num_patches_per_row and pixel_bboxes[i][0] % num_patches_per_row != 0:
+#                     for box in pixel_bboxes: 
+#                         if pixel_bboxes[i+1][0] == (pixel_bboxes[i][0] + 1) or pixel_bboxes[i+1][0] == (pixel_bboxes[i][0] + num_patches_per_row):
+#                     #        
+#                             if (pixel_bboxes[i][1] == box[1]  # Same class
+#                                 and abs(pixel_bboxes[i][5] - box[3]) < 5
+#                                 or abs(pixel_bboxes[i][6] - box[4]) < 5):  # Check 5-pixel margin between patches
+#                                 # Merge the boxes
+#                                 new_x_min = min(pixel_bboxes[i][3], box[3])
+#                                 new_y_min = min(pixel_bboxes[i][4], box[4])
+#                                 new_x_max = max(pixel_bboxes[i][5], box[5])
+#                                 new_y_max = max(pixel_bboxes[i][6], box[6])
+#                                 merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + box[2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+#                                 merged = True
+#                                 break
+
+#                 else:
+#                     for box in pixel_bboxes:
+#                         if pixel_bboxes[i][0] == box[0] + num_patches_per_row and pixel_bboxes[i][1] == box[1] and abs(pixel_bboxes[i][6] - box[4]) < 5:  # Same class and Check 5-pixel margin between patches
+#                             # Merge the boxes
+#                             new_x_min = min(pixel_bboxes[i][3], box[3])
+#                             new_y_min = min(pixel_bboxes[i][4], box[4])
+#                             new_x_max = max(pixel_bboxes[i][5], box[5])
+#                             new_y_max = max(pixel_bboxes[i][6], box[6])
+#                             merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + box[2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+#                             merged = True
+#                             break
+
+#             else:
+#                 for box in pixel_bboxes:
+#                     if pixel_bboxes[i][0] == box[0] + 1 and pixel_bboxes[i][1] == box[1] and abs(pixel_bboxes[i][5] - box[3]) < 5:  # Same class and Check 5-pixel margin between patches                
+  
+#                         new_x_min = min(pixel_bboxes[i][3], box[3])
+#                         new_y_min = min(pixel_bboxes[i][4], box[4])
+#                         new_x_max = max(pixel_bboxes[i][5], box[5])
+#                         new_y_max = max(pixel_bboxes[i][6], box[6])
+#                         merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2] + box[2]) / 2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+#                         merged = True
+#                         break
+#         if not merged:
+#             pixel_bboxes[i][0]=train_idx
+#             pixel_bboxes[i].append("nm")
+#             merged_bboxes.append(pixel_bboxes[i])
+        
+#     return merged_bboxes
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 # Convert pixel coordinates back to normalized coordinates for the original image
 def convert_to_normalized_coords(dets, img_width, img_height):
@@ -252,21 +373,43 @@ def convert_to_normalized_coords(dets, img_width, img_height):
     return normalized_coords
 
 # Draw bounding boxes on the original image
-def draw_bboxes(image, bboxes):
+def draw_bboxes(image, bboxes, num_patches, desired_img_width, desired_img_height, class_name_mapping):
     for bbox in bboxes:
         # class_id, class_prob, x_min, y_min, x_max, y_max = bbox
         img_index, class_id, class_prob, x_center, y_center, w, h, m = bbox
         # print(f"class_id: {class_id}, class_prob: {class_prob}, x_center: {x_center}, y_center: {y_center}, w: {w}, h: {h}")
 
+        patch_width = desired_img_width // int(math.sqrt(num_patches))
+        patch_height = desired_img_height // int(math.sqrt(num_patches))    
         
         x1 = int((x_center - w / 2) * image.shape[1])
         y1 = int((y_center - h / 2) * image.shape[0])
         x2 = int((x_center + w / 2) * image.shape[1])
         y2 = int((y_center + h / 2) * image.shape[0])
+
+
+        vertical_pt1 = (int((image.shape[1]*patch_width)/desired_img_width), 0)
+        vertical_pt2 = (int((image.shape[1]*patch_width)/desired_img_width), image.shape[0])
+        horizontal_pt1 = (0, int((image.shape[0]*patch_height)/desired_img_height))
+        horizontal_pt2 = (image.shape[1], int((image.shape[0]*patch_height)/desired_img_height))
+        
+
         if m == "m":
             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 1)
+            # Fetch class name and print it along with class probability (confidence)
+            class_name = class_name_mapping.get(class_id, "Unknown")
+            label = f'{class_name}: {class_prob:.2f}'
+            cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            cv2.line(image, vertical_pt1, vertical_pt2, (0,0,0), thickness=2) #vertical
+            cv2.line(image, horizontal_pt1, horizontal_pt2, (0,0,0), thickness=2) #horizontal  
         else:
             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 1)
+            # Fetch class name and print it along with class probability (confidence)
+            class_name = class_name_mapping.get(class_id, "Unknown")
+            label = f'{class_name}: {class_prob:.2f}'
+            cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.line(image, vertical_pt1, vertical_pt2, (0,0,0), thickness=2) #vertical
+            cv2.line(image, horizontal_pt1, horizontal_pt2, (0,0,0), thickness=2) #horizontal         
         # cv2.rectangle(image, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 2)
         # cv2.putText(image, f'{class_prob:.2f}', (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     return image
@@ -518,14 +661,14 @@ if __name__ == "__main__":
         image_path = args.image_dir + image
 
         # Define the dimensions of the original image and patches
-        original_img_width = resolution[0]  # Example width
-        original_img_height = resolution[1]  # Example height
+        desired_img_width = resolution[0]  # Example width
+        desired_img_height = resolution[1]  # Example height
         if mode == "vertical":
-            patch_width = original_img_width // num_patches
-            patch_height = original_img_height
+            patch_width = desired_img_width // num_patches
+            patch_height = desired_img_height
         if mode == "grid":
-            patch_width = original_img_width // int(math.sqrt(num_patches))
-            patch_height = original_img_height // int(math.sqrt(num_patches))     
+            patch_width = desired_img_width // int(math.sqrt(num_patches))
+            patch_height = desired_img_height // int(math.sqrt(num_patches))     
 
         create_patches(image_path, num_patches, mode, overlap, resolution, args.output_patches_dir)
         start_time = time.time()
@@ -539,10 +682,10 @@ if __name__ == "__main__":
 
         # draw_bboxes_on_image(image_path,pixel_bboxes)
         # Merge bboxes that are split across adjacent patches
-        merged_bboxes = merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches, mode)
+        merged_bboxes = merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches)
         # print(f"merged bboxes in pixel coords are : -----____-----_____------: {merged_bboxes}")
         # Convert merged bboxes back to normalized coordinates
-        normalized_bboxes = convert_to_normalized_coords(merged_bboxes, original_img_width, original_img_height)
+        normalized_bboxes = convert_to_normalized_coords(merged_bboxes, desired_img_width, desired_img_height)
         # print(f"final normalised bbox coords are : -----____-----_____------: {normalized_bboxes}")
 
         # Load original image
@@ -550,7 +693,7 @@ if __name__ == "__main__":
         original_image = cv2.imread(image_path)
 
         # Draw bounding boxes on the original image
-        image_with_bboxes = draw_bboxes(original_image, normalized_bboxes)
+        image_with_bboxes = draw_bboxes(original_image, normalized_bboxes, num_patches, desired_img_width, desired_img_height, class_name_mapping)
 
         # Save or display the image with bounding boxes
         cv2.imwrite(args.output_image_dir + image, image_with_bboxes)
