@@ -104,9 +104,9 @@ def handling_GT(labels_directory, image_folder_path, output_folder_path, height,
                 cv2.imwrite(output_image_path, frame)      
 
 
-    GT_medium_boxes = [box for box in GT_medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
-    GT_small_boxes = [box for box in GT_small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
-    GT_large_boxes = [box for box in GT_large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
+    GT_medium_boxes = [box for box in GT_medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
+    GT_small_boxes = [box for box in GT_small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
+    GT_large_boxes = [box for box in GT_large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
 
     return  GT_small_boxes, GT_medium_boxes, GT_large_boxes
 
@@ -310,9 +310,9 @@ def separate_boxes_as_per_size(all_boxes):
 
     # print(f"small boxes: ------> {small_boxes[:2]}, medium boxes: ------> {medium_boxes[:2]}, large boxes: ------> {large_boxes[:2]}")
 
-    medium_boxes = [box for box in medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
-    small_boxes = [box for box in small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
-    large_boxes = [box for box in large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 2]
+    medium_boxes = [box for box in medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
+    small_boxes = [box for box in small_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
+    large_boxes = [box for box in large_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
 
     return small_boxes, medium_boxes, large_boxes
 
@@ -494,7 +494,7 @@ def decorative_message(function_name):
 
 if __name__ == "__main__":
 
-    with open('/Users/chinya07/Desktop/PROJECTS/PHD/image-preprocessing-for-improved-SOD/image-preprocessing-for-improved-SOD/image-patching/ROI_zooming_config.yaml', 'r') as f:
+    with open('/Users/chinya07/Desktop/PROJECTS/PHD/image-preprocessing-for-improved-SOD/image-preprocessing-for-improved-SOD/image-centre-ROI-cropping/ROI_zooming_config.yaml', 'r') as f:
         config = yaml.safe_load(f)
 
 
@@ -594,6 +594,36 @@ if __name__ == "__main__":
     decorative_message("handling_GT")
 
 
+    mAP = mean_average_precision(
+    small_boxes,
+    GT_small_boxes,
+    iou_threshold,
+    box_format,
+    mAP_num_classes,
+    )
+    print(f"mAP for Small boxes ========:> {mAP.item()}")
+
+
+    mAP = mean_average_precision(
+    medium_boxes,
+    GT_medium_boxes,
+    iou_threshold,
+    box_format,
+    mAP_num_classes,
+    )
+    print(f"mAP for Medium boxes ========:> {mAP.item()}")
+
+    mAP = mean_average_precision(
+    large_boxes,
+    GT_large_boxes,
+    iou_threshold,
+    box_format,
+    mAP_num_classes,
+    )
+    print(f"mAP for Large boxes ========:> {mAP.item()}")        
+
+
+    iou_threshold=0.5
     mAP = mean_average_precision(
     small_boxes,
     GT_small_boxes,

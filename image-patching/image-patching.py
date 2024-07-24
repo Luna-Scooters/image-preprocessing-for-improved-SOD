@@ -12,7 +12,13 @@ import yaml
 import argparse
 import tqdm
 import time 
-
+import sahi
+from sahi import AutoDetectionModel
+from sahi.utils.cv import read_image
+from sahi.utils.file import download_from_url
+from sahi.predict import get_prediction, get_sliced_prediction, predict
+from torchmetrics.detection import MeanAveragePrecision
+from pprint import pprint
 
 def draw_gt_boxes(image, gt_boxes, color=(0, 255, 0), thickness=2):
     
@@ -220,7 +226,8 @@ def convert_to_pixel_coords(dets, patch_width, patch_height, num_patches, mode):
 
 # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%----OLD MERGE BOXES LOGIC COMPARING WITH EVERY BOXES----%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 
-def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches):
+def merge_bboxes(pixel_bboxes, patch_width, patch_height, train_idx, num_patches):
+    print("train_idx: ", train_idx)
     merged_bboxes = []
     num_patches_per_row = int(math.sqrt(num_patches))
     pixel_bboxes.sort(key=lambda x: (x[0], x[3]))  # Sort by patch_index and x_min
@@ -237,45 +244,79 @@ def merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches):
                         ((pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))) < 
                         int(0.5 * (max((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4]), 
                         (pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))))
-                    and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent patches
-                    or pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row
+                    and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent patches                
                     and abs(pixel_bboxes[i][5] - patch_width * (pixel_bboxes[i][0]))<5  # Right edge of left patch
-                    and abs(pixel_bboxes[j][3] - patch_width * (pixel_bboxes[i][0]))<5
-                    or abs(pixel_bboxes[i][6] - patch_height * (pixel_bboxes[i][0]))<5  # Right edge of left patch
-                    or abs(pixel_bboxes[j][4] - patch_height * (pixel_bboxes[i][0]))<5                    ):  # Left edge of right patch                            
+                    and abs(pixel_bboxes[j][3] - patch_width * (pixel_bboxes[i][0]))<5):                       
                 # Merge the boxes
 
                 new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
                 new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
                 new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
                 new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
-                merged_bboxes.append([pixel_bboxes[i][0], pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+                merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
                 merged = True
                 break
 
-            # elif (pixel_bboxes[i][1] != pixel_bboxes[j][1]  # Same class
-            #         and pixel_bboxes[j][2] < 0.40
-            #         and abs(((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4])) -
-            #             ((pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))) < 
-            #             int(0.5 * (max((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4]), 
-            #             (pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))))                    
-            #         and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent patches
-            #         or pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row
-            #         and abs(pixel_bboxes[i][5] - patch_width * (pixel_bboxes[i][0]))<5  # Right edge of left patch
-            #         and abs(pixel_bboxes[j][3] - patch_width * (pixel_bboxes[i][0]))<5
-            #         or abs(pixel_bboxes[i][6] - patch_height * (pixel_bboxes[i][0]))<5  # Right edge of left patch
-            #         or abs(pixel_bboxes[j][4] - patch_height * (pixel_bboxes[i][0]))<5):                         
-            #     # Merge the boxes
+            elif (pixel_bboxes[i][1] == pixel_bboxes[j][1]  # Same class
+                    and pixel_bboxes[j][2] < 0.60
+                    and abs(((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4])) -
+                        ((pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))) < 
+                        int(0.5 * (max((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4]), 
+                        (pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))))
+                    and pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row
+                    and abs(pixel_bboxes[i][6] - patch_height * (pixel_bboxes[i][0]))<5  # Right edge of left patch
+                    and abs(pixel_bboxes[j][4] - patch_height * (pixel_bboxes[i][0]))<5                    ):  # Left edge of right patch                            
+                # Merge the boxes
 
-            #     new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
-            #     new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
-            #     new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
-            #     new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
-            #     merged_bboxes.append([pixel_bboxes[i][0], pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
-            #     merged = True
-            #     break       
+                new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
+                new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
+                new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
+                new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
+                merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+                merged = True
+                break
+
+            elif (pixel_bboxes[i][1] != pixel_bboxes[j][1]  # Same class
+                    and pixel_bboxes[j][2] < 0.40
+                    and abs(((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4])) -
+                        ((pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))) < 
+                        int(0.5 * (max((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4]), 
+                        (pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))))                    
+                    and pixel_bboxes[j][0] == pixel_bboxes[i][0] + 1  # Adjacent patches
+                    and abs(pixel_bboxes[i][5] - patch_width * (pixel_bboxes[i][0]))<5  # Right edge of left patch
+                    and abs(pixel_bboxes[j][3] - patch_width * (pixel_bboxes[i][0]))<5):                    
+                # Merge the boxes
+
+                new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
+                new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
+                new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
+                new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
+                merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+                merged = True
+                break       
+
+            elif (pixel_bboxes[i][1] != pixel_bboxes[j][1]  # Same class
+                    and pixel_bboxes[j][2] < 0.40
+                    and abs(((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4])) -
+                        ((pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))) < 
+                        int(0.5 * (max((pixel_bboxes[j][5] - pixel_bboxes[j][3])*(pixel_bboxes[j][6] - pixel_bboxes[j][4]), 
+                        (pixel_bboxes[i][5] - pixel_bboxes[i][3])*(pixel_bboxes[i][6] - pixel_bboxes[i][4]))))                    
+
+                    and pixel_bboxes[j][0] == pixel_bboxes[i][0] + num_patches_per_row
+                    and abs(pixel_bboxes[i][6] - patch_height * (pixel_bboxes[i][0]))<5  # Right edge of left patch
+                    and abs(pixel_bboxes[j][4] - patch_height * (pixel_bboxes[i][0]))<5):                         
+                # Merge the boxes
+
+                new_x_min = min(pixel_bboxes[i][3], pixel_bboxes[j][3])
+                new_y_min = min(pixel_bboxes[i][4], pixel_bboxes[j][4])
+                new_x_max = max(pixel_bboxes[i][5], pixel_bboxes[j][5])
+                new_y_max = max(pixel_bboxes[i][6], pixel_bboxes[j][6])
+                merged_bboxes.append([train_idx, pixel_bboxes[i][1], (pixel_bboxes[i][2]+pixel_bboxes[j][2])/2, new_x_min, new_y_min, new_x_max, new_y_max, "m"])
+                merged = True
+                break                
 
         if not merged:
+            pixel_bboxes[i][0]=train_idx
             pixel_bboxes[i].append("nm")
             merged_bboxes.append(pixel_bboxes[i])
 
@@ -365,8 +406,8 @@ def convert_to_normalized_coords(dets, img_width, img_height):
     normalized_coords = []
     for bbox in dets:
         img_index, class_id, class_prob, x_min, y_min, x_max, y_max, _ = bbox
-        x_center = (x_min + x_max) / 2 / img_width
-        y_center = (y_min + y_max) / 2 / img_height
+        x_center = ((x_min + x_max) / 2) / img_width
+        y_center = ((y_min + y_max) / 2) / img_height
         box_width = (x_max - x_min) / img_width
         box_height = (y_max - y_min) / img_height
         normalized_coords.append([img_index, class_id, class_prob, x_center, y_center, box_width, box_height, _])
@@ -582,7 +623,42 @@ def calculate_area(bbox):
     _,_,_,_,_, w, h = bbox
     return w * h
 
+def xywh_GT_to_xyxy_for_torchmetrics(x,y,w,h,class_id, desired_img_width, desired_img_height):
 
+    x_min = (x - w / 2) * desired_img_width
+    y_min = (y - h / 2) * desired_img_height
+    x_max = (x + w / 2) * desired_img_width
+    y_max = (y + h / 2) * desired_img_height
+    return [x_min, y_min, x_max, y_max], class_id
+
+# This logic is for my merge_boxes mehod and not for SAHI for SAHI, we will process the preds somewhere else okay ? (INCOMPLETE)
+def xywh_preds_to_xyxy_for_torchmetrics(dets):
+
+    for bbox in dets:
+        img_index, class_id, class_prob, x_min, y_min, x_max, y_max, _ = bbox
+        return [x_min, y_min, x_max, y_max], class_prob, class_id
+
+
+def test_SAHI(model, image_path, resolution, patch_width, patch_height):
+
+
+    org_image = Image.open(image_path)
+    frame = org_image.resize((resolution[0],resolution[1]))
+
+    return get_sliced_prediction(
+                frame,
+                model,
+                slice_height=patch_height,
+                slice_width=patch_width,
+                overlap_height_ratio=0,
+                overlap_width_ratio=0,
+                postprocess_match_threshold=0.5,
+                
+            ).object_prediction_list
+
+    
+
+    
 
 
 if __name__ == "__main__":
@@ -631,6 +707,13 @@ if __name__ == "__main__":
 
 
     model = YOLO(args.model)
+
+    detection_model = AutoDetectionModel.from_pretrained(
+    model_type='yolov8',
+    model_path=args.model,
+    confidence_threshold=0.3,
+    device="cpu", # or 'cuda:0'
+)
     class_name_mapping = config['class_name_mapping']
     total_class_counts = defaultdict(int)
     all_boxes = []
@@ -657,18 +740,31 @@ if __name__ == "__main__":
     total_images = len(os.listdir(args.image_dir))
     pbar = tqdm.tqdm(total=total_images, desc="Processing images")
 
+    preds_for_SAHI = []
+
+
     for image in sorted(os.listdir(args.image_dir)):        
         image_path = args.image_dir + image
 
         # Define the dimensions of the original image and patches
         desired_img_width = resolution[0]  # Example width
         desired_img_height = resolution[1]  # Example height
+
         if mode == "vertical":
             patch_width = desired_img_width // num_patches
             patch_height = desired_img_height
         if mode == "grid":
             patch_width = desired_img_width // int(math.sqrt(num_patches))
-            patch_height = desired_img_height // int(math.sqrt(num_patches))     
+            patch_height = desired_img_height // int(math.sqrt(num_patches))
+
+        sahi_result = test_SAHI(detection_model, image_path, resolution, patch_width, patch_height)
+        preds_for_SAHI.append(dict(boxes=torch.tensor([i.bbox.to_xyxy() for i in sahi_result]), scores=torch.tensor([i.score.value for i in sahi_result]), labels=torch.tensor([i.category.id for i in sahi_result])))
+
+        preds_bboxes = []
+        preds_scores = []
+        preds_labels = []
+
+     
 
         create_patches(image_path, num_patches, mode, overlap, resolution, args.output_patches_dir)
         start_time = time.time()
@@ -682,7 +778,12 @@ if __name__ == "__main__":
 
         # draw_bboxes_on_image(image_path,pixel_bboxes)
         # Merge bboxes that are split across adjacent patches
-        merged_bboxes = merge_bboxes(pixel_bboxes, patch_width, train_idx, num_patches)
+        merged_bboxes = merge_bboxes(pixel_bboxes, patch_width, patch_height, train_idx, num_patches)
+
+        # preds_box_coords, preds_box_scores, preds_box_labels = xywh_preds_to_xyxy_for_torchmetrics(x, y, w, h, class_id, desired_img_width, desired_img_height)
+        # GT_targets.append(box_coords)
+        # GT_labels.append(scores)
+        
         # print(f"merged bboxes in pixel coords are : -----____-----_____------: {merged_bboxes}")
         # Convert merged bboxes back to normalized coordinates
         normalized_bboxes = convert_to_normalized_coords(merged_bboxes, desired_img_width, desired_img_height)
@@ -734,7 +835,13 @@ if __name__ == "__main__":
 
 
 
+    targets = []
+    
     for frame_id, filename in enumerate(sorted(os.listdir(args.GT_label_dir))):
+
+        GT_targets = []
+        GT_labels = []    
+
         if filename.endswith('.txt'):
             file_path = os.path.join(args.GT_label_dir, filename)
 
@@ -744,6 +851,12 @@ if __name__ == "__main__":
                     parts = line.strip().split()
                     if len(parts) == 5:
                         class_id, x, y, w, h = int(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+
+                        #call xywh_GT_to_xyxy function here to convert norm coords to pixel coords
+                        box_coords, scores = xywh_GT_to_xyxy_for_torchmetrics(x, y, w, h, class_id, desired_img_width, desired_img_height)
+                        GT_targets.append(box_coords)
+                        GT_labels.append(scores)
+
                         class_prob = 1.0
                         bbox = [frame_id, class_id, class_prob, x, y, w, h]
                         
@@ -755,6 +868,8 @@ if __name__ == "__main__":
                         else:
                             GT_large_boxes.append(bbox)
 
+        targets.append(dict(boxes=torch.tensor(GT_targets), labels=torch.tensor(GT_labels)))
+    targets.pop(0)
 
 
     GT_medium_boxes = [box for box in GT_medium_boxes if box[1] == 0 or box[1] == 3 or box[1] == 6]
@@ -767,45 +882,79 @@ if __name__ == "__main__":
 
 
     # print(f"GT_small_boxes look like this: {GT_small_boxes}")
-    # print(f"Predicted small_boxes look like this: {small_boxes}")
+    # print(f"Predicted small_boxes look like this: {large_boxes}")
+    print("TARGETS---------------------------------------------->>>>>>>>>>>>>> ",targets)
+    print("PREDS---------------------------------------------->>>>>>>>>>>>>> ",preds_for_SAHI)
 
 
-    mAP = mean_average_precision(
-    small_boxes,
-    GT_small_boxes,
-    iou_threshold,
-    box_format,
-    mAP_num_classes,
-    )
-    print(f"mAP for Small boxes ========:> {mAP.item()}")
+    metric = MeanAveragePrecision(iou_type="bbox", backend='pycocotools')
+    metric.update(preds_for_SAHI, targets)
+    pprint(metric.compute())
 
 
-    mAP = mean_average_precision(
-    medium_boxes,
-    GT_medium_boxes,
-    iou_threshold,
-    box_format,
-    mAP_num_classes,
-    )
-    print(f"mAP for Medium boxes ========:> {mAP.item()}")
-
-    mAP = mean_average_precision(
-    large_boxes,
-    GT_large_boxes,
-    iou_threshold,
-    box_format,
-    mAP_num_classes,
-    )
-    print(f"mAP for Large boxes ========:> {mAP.item()}")        
+    # mAP = mean_average_precision(
+    # small_boxes,
+    # GT_small_boxes,
+    # iou_threshold,
+    # box_format,
+    # mAP_num_classes,
+    # )
+    # print(f"mAP for Small boxes ========:> {mAP.item()}")
 
 
-    mAP = mean_average_precision(
-    small_boxes+medium_boxes,
-    GT_small_boxes+GT_medium_boxes,
-    iou_threshold,
-    box_format,
-    mAP_num_classes,
-    )
-    print(f"mAP for small + medium boxes ========:> {mAP.item()}")        
+    # mAP = mean_average_precision(
+    # medium_boxes,
+    # GT_medium_boxes,
+    # iou_threshold,
+    # box_format,
+    # mAP_num_classes,
+    # )
+    # print(f"mAP for Medium boxes ========:> {mAP.item()}")
+
+    # mAP = mean_average_precision(
+    # large_boxes,
+    # GT_large_boxes,
+    # iou_threshold,
+    # box_format,
+    # mAP_num_classes,
+    # )
+    # print(f"mAP for Large boxes ========:> {mAP.item()}")        
 
 
+    # # mAP = mean_average_precision(
+    # # small_boxes+medium_boxes,
+    # # GT_small_boxes+GT_medium_boxes,
+    # # iou_threshold,
+    # # box_format,
+    # # mAP_num_classes,
+    # # )
+    # # print(f"mAP for small + medium boxes ========:> {mAP.item()}")        
+
+    # iou_threshold=0.5
+    # mAP = mean_average_precision(
+    # small_boxes,
+    # GT_small_boxes,
+    # iou_threshold,
+    # box_format,
+    # mAP_num_classes,
+    # )
+    # print(f"mAP for Small boxes ========:> {mAP.item()}")
+
+
+    # mAP = mean_average_precision(
+    # medium_boxes,
+    # GT_medium_boxes,
+    # iou_threshold,
+    # box_format,
+    # mAP_num_classes,
+    # )
+    # print(f"mAP for Medium boxes ========:> {mAP.item()}")
+
+    # mAP = mean_average_precision(
+    # large_boxes,
+    # GT_large_boxes,
+    # iou_threshold,
+    # box_format,
+    # mAP_num_classes,
+    # )
+    # print(f"mAP for Large boxes ========:> {mAP.item()}")       

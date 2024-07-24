@@ -1,7 +1,9 @@
 
 
 
-model: '/Users/chinya07/Downloads/IDD_Train_V0_160x160.pt'
+model: '/Users/chinya07/Downloads/IDD_Train_V0_320x320.pt'
+# model: '/Users/chinya07/Downloads/IDD_Train_V0_160x160.pt'
+
 class_name_mapping: {0: 'Car',
   1: 'Bus',
   2: 'Truck',
@@ -56,6 +58,8 @@ medium_bbox_area_threshold: 0.09
 # Paths -------------------------------------------------------------------------------------------------------
 
 image_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/test_images/"
+# image_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/test_single_image/"
+# image_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video3/images/"
 
 output_patches_dir: "/Users/chinya07/Desktop/patches"
 
@@ -69,12 +73,13 @@ output_image_dir: "/Users/chinya07/Desktop/IMAGE-PATCHING-RESULTS/"
 
 # GT_image_dir:
 
-GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/320-320-transformed-test-labels/"
-
+GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/640-640-transformed-test-labels/"
+# GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/test_single_label"
+# GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video3/320-320-labels/"
 
 # Image and patch size -------------------------------------------------------------------------------------------------------
 
-image_resolution: [320,320]
+image_resolution: [640,640]
 
 
 # IOU and MAP settings
@@ -211,7 +216,7 @@ box_format: "midpoint"
 
 
 
-# mAP for Small boxes ========:> 0.07224686443805695
+# mAP for Small boxes ========:> 0.07224686443805695q
 # mAP for Medium boxes ========:> 0.10394906252622604
 # mAP for Large boxes ========:> 0.059405919164419174
 

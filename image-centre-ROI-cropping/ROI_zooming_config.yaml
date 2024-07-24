@@ -8,7 +8,7 @@ no_speed_csv: '/Users/chinya07/Downloads/unzoomed-video1-manually-labelled-speed
 model: '/Users/chinya07/Downloads/IDD_Train_V0_160x160.pt' 
 # model: '/Users/chinya07/Downloads/IDD_Train_V0_320x320.pt'
 # model: '/Users/chinya07/Downloads/IDD_Train_V0_640x640.pt'
-
+# model: '/Users/chinya07/Downloads/nuImages_solo_320_nano.pt'
 
 class_name_mapping: {0: 'Car',
   1: 'Bus',
@@ -21,6 +21,19 @@ class_name_mapping: {0: 'Car',
   8: 'Traffic_signs',
   9: 'Scooter',
   10: 'Traffic_light'}
+
+#NU
+# class_name_mapping: {0: 'Pedestrian',
+# 1: 'Bicycle',
+# 2: 'Car',
+# 3: 'Motorcycle',
+# 4: 'Bus',
+# 5: 'Truck',
+# 6: 'Bike_lane_marker',
+# 7: 'Scooter',
+# 8: 'Traffic_sign',
+# 9: 'Traffic_light'
+# }
 
 total_num_classes: 11
 
@@ -70,9 +83,10 @@ output_folder_path: '/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1
 
 # GT_image_dir:
 
-# GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/320-320-transformed-test-labels/"
-
 GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/160-160-transformed-test-labels/"
+
+# GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/160-160-transformed-test-labels/"
+# GT_label_dir: "/Users/chinya07/Desktop/PROJECTS/LUNA/IDD_Annotation/video1/test_labels/"
 
 # Image and patch size -------------------------------------------------------------------------------------------------------
 
